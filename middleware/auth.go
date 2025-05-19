@@ -12,7 +12,7 @@ import (
 
 type contextKey string
 
-const userKey contextKey = "username"
+const userContextKey = contextKey("user")
 
 func Authenticate(cfg *config.Config) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
@@ -27,11 +27,14 @@ func Authenticate(cfg *config.Config) func(http.Handler) http.Handler {
 				return
 			}
 
-			username := claims.Username
-			logger.InfoLogger.Printf("Authenticated request by user: %s", username)
-
-			ctx := context.WithValue(r.Context(), userKey, username)
+			ctx := context.WithValue(r.Context(), userContextKey, claims.Username)
+			logger.InfoLogger.Printf("Authenticated request by user: %s", claims.Username)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+func GetUserFromContext(r *http.Request) string {
+	user, _ := r.Context().Value(userContextKey).(string)
+	return user
 }

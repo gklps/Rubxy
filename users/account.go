@@ -2,14 +2,15 @@ package users
 
 import (
 	"fmt"
+	"rubxy/db"
 	"sync"
 
 	"golang.org/x/crypto/bcrypt"
 )
 
 type User struct {
-	Username     string
-	PasswordHash string
+	ID       int
+	Username string
 }
 
 var (
@@ -18,34 +19,25 @@ var (
 )
 
 func Register(username, password string) error {
-	mu.Lock()
-	defer mu.Unlock()
-
-	if _, exists := users[username]; exists {
-		return fmt.Errorf("user already exists")
-	}
-
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
-		return err
+		return fmt.Errorf("password hash error: %w", err)
 	}
 
-	users[username] = &User{
-		Username:     username,
-		PasswordHash: string(hash),
+	_, err = db.DB.Exec("INSERT INTO users (username, password_hash) VALUES ($1, $2)", username, string(hash))
+	if err != nil {
+		return fmt.Errorf("failed to insert user: %w", err)
 	}
 	return nil
 }
 
 func Authenticate(username, password string) bool {
-	mu.Lock()
-	user, exists := users[username]
-	mu.Unlock()
-
-	if !exists {
+	var hashed string
+	err := db.DB.QueryRow("SELECT password_hash FROM users WHERE username=$1", username).Scan(&hashed)
+	if err != nil {
 		return false
 	}
 
-	err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password))
+	err = bcrypt.CompareHashAndPassword([]byte(hashed), []byte(password))
 	return err == nil
 }

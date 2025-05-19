@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
-
 	"rubxy/logger"
+	"rubxy/middleware"
 )
 
 func NewReverseProxy(target string) http.Handler {
@@ -15,12 +15,12 @@ func NewReverseProxy(target string) http.Handler {
 	originalDirector := proxy.Director
 	proxy.Director = func(req *http.Request) {
 		originalDirector(req)
-		username := req.Context().Value("username")
+		username := middleware.GetUserFromContext(req)
 		logger.InfoLogger.Printf("[REQUEST] User: %s Method: %s Path: %s", username, req.Method, req.URL.Path)
 	}
 
 	proxy.ModifyResponse = func(resp *http.Response) error {
-		username := resp.Request.Context().Value("username")
+		username := middleware.GetUserFromContext(resp.Request)
 		logger.InfoLogger.Printf("[RESPONSE] User: %s Status: %d URL: %s", username, resp.StatusCode, resp.Request.URL)
 		return nil
 	}

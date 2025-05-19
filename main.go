@@ -3,13 +3,15 @@ package main
 import (
 	"log"
 	"net/http"
+
+	"github.com/go-chi/chi/v5"
+
 	"rubxy/auth"
 	"rubxy/config"
+	"rubxy/db"
 	"rubxy/logger"
 	"rubxy/middleware"
 	"rubxy/proxy"
-
-	"github.com/go-chi/chi/v5"
 )
 
 func main() {
@@ -18,22 +20,24 @@ func main() {
 	defer logger.LogFile.Close()
 	logger.InfoLogger.Println("Starting server...")
 
+	db.Init(cfg.DatabaseURL)
+	defer db.DB.Close()
+
 	r := chi.NewRouter()
 
-	// Public routes: token get and refresh
+	// Public routes
 	r.Post("/get-token", auth.HandleToken(cfg))
 	r.Post("/refresh-token", auth.HandleRefresh(cfg))
 	r.Post("/register", auth.HandleRegister())
+	r.Post("/logout", auth.HandleLogout())
 
-	// Proxy to rubixgoplatform running at localhost:20000
+	// Protected routes
 	target := "http://localhost:20000"
 	proxyHandler := proxy.NewReverseProxy(target)
-
-	// Protected proxy routes with auth middleware
 	r.With(middleware.Authenticate(cfg)).Handle("/*", proxyHandler)
 
-	log.Printf("Starting server on %s\n", cfg.Port)
+	log.Printf("Server running at %s\n", cfg.Port)
 	if err := http.ListenAndServe(cfg.Port, r); err != nil {
-		log.Fatalf("Failed to start server: %v", err)
+		log.Fatalf("Server failed: %v", err)
 	}
 }

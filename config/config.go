@@ -8,6 +8,7 @@ type Config struct {
 	RefreshSecret string
 	AccessTTL     time.Duration
 	RefreshTTL    time.Duration
+	DatabaseURL   string
 }
 
 func Load() *Config {
@@ -17,5 +18,6 @@ func Load() *Config {
 		RefreshSecret: "your-refresh-secret",
 		AccessTTL:     15 * time.Minute,
 		RefreshTTL:    7 * 24 * time.Hour,
+		DatabaseURL:   "postgres://user:password@localhost:5432/rubxy?sslmode=disable",
 	}
 }
