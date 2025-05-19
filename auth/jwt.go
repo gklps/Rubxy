@@ -39,12 +39,12 @@ func GenerateToken(username string, cfg *config.Config, isRefresh bool) (string,
 	}
 
 	// Store refresh token in DB
-	if isRefresh {
+	/* if isRefresh {
 		err := db.SaveRefreshToken(signedToken, username, claims.ExpiresAt.Time)
 		if err != nil {
 			return "", time.Time{}, err
 		}
-	}
+	} */
 
 	return signedToken, claims.ExpiresAt.Time, nil
 }
