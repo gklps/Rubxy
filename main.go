@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"rubxy/auth"
 	"rubxy/config"
+	"rubxy/logger"
 	"rubxy/middleware"
 	"rubxy/proxy"
 
@@ -13,6 +14,9 @@ import (
 
 func main() {
 	cfg := config.Load()
+	logger.Init("rubxy.log") // <--- INIT LOGGER HERE
+	logger.InfoLogger.Println("Starting server...")
+
 	r := chi.NewRouter()
 
 	// Public routes: token get and refresh
