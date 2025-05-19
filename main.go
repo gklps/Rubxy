@@ -14,7 +14,8 @@ import (
 
 func main() {
 	cfg := config.Load()
-	logger.Init("rubxy.log") // <--- INIT LOGGER HERE
+	logger.Init("rubxy.log")
+	defer logger.LogFile.Close()
 	logger.InfoLogger.Println("Starting server...")
 
 	r := chi.NewRouter()
