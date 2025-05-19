@@ -18,6 +18,7 @@ func main() {
 	// Public routes: token get and refresh
 	r.Post("/get-token", auth.HandleToken(cfg))
 	r.Post("/refresh-token", auth.HandleRefresh(cfg))
+	r.Post("/register", auth.HandleRegister())
 
 	// Proxy to rubixgoplatform running at localhost:20000
 	target := "http://localhost:20000"
