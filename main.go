@@ -3,7 +3,6 @@ package main
 import (
 	"log"
 	"net/http"
-
 	"rubxy/auth"
 	"rubxy/config"
 	"rubxy/middleware"
@@ -16,16 +15,19 @@ func main() {
 	cfg := config.Load()
 	r := chi.NewRouter()
 
-	// Public routes
-	r.Post("/auth/token", auth.HandleToken(cfg))
-	r.Post("/auth/refresh", auth.HandleRefresh(cfg))
+	// Public routes: token get and refresh
+	r.Post("/get-token", auth.HandleToken(cfg))
+	r.Post("/refresh-token", auth.HandleRefresh(cfg))
 
-	// Protected routes
-	r.Group(func(r chi.Router) {
-		r.Use(middleware.Authenticate(cfg))
-		r.Handle("/*", proxy.NewReverseProxy("http://localhost:20000"))
-	})
+	// Proxy to rubixgoplatform running at localhost:20000
+	target := "http://localhost:20000"
+	proxyHandler := proxy.NewReverseProxy(target)
 
-	log.Printf("Proxy server started on %s", cfg.Port)
-	http.ListenAndServe(cfg.Port, r)
+	// Protected proxy routes with auth middleware
+	r.With(middleware.Authenticate(cfg)).Handle("/*", proxyHandler)
+
+	log.Printf("Starting server on %s\n", cfg.Port)
+	if err := http.ListenAndServe(cfg.Port, r); err != nil {
+		log.Fatalf("Failed to start server: %v", err)
+	}
 }

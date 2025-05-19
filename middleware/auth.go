@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"strings"
 
-	"rubix-proxy/auth"
-	"rubix-proxy/config"
+	"rubxy/auth"
+	"rubxy/config"
 )
 
 func Authenticate(cfg *config.Config) func(http.Handler) http.Handler {
