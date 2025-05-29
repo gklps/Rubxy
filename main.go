@@ -30,11 +30,17 @@ func main() {
 	r.Post("/refresh-token", auth.HandleRefresh(cfg))
 	r.Post("/register", auth.HandleRegister())
 	r.Post("/logout", auth.HandleLogout())
+	// Protected admin routes
+	r.With(middleware.Authenticate(cfg)).Post("/admin/activity/add", proxy.HandleAdminActivityAdd)
+	r.With(middleware.Authenticate(cfg)).Post("/admin/reward/transfer", proxy.HandleAdminRewardTransfer)
 
 	// Protected routes
 	target := "http://localhost:20000"
 	proxyHandler := proxy.NewReverseProxy(target)
-	r.With(middleware.Authenticate(cfg)).Handle("/*", proxyHandler)
+	//r.With(middleware.Authenticate(cfg)).Handle("/*", proxyHandler)
+	r.Route("/api", func(api chi.Router) {
+		api.With(middleware.Authenticate(cfg)).Handle("/*", proxyHandler)
+	})
 
 	log.Printf("Server running at %s\n", cfg.Port)
 	if err := http.ListenAndServe(cfg.Port, r); err != nil {
