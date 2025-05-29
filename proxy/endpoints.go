@@ -3,8 +3,10 @@ package proxy
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
+	"os"
 )
 
 type ActivityAddRequest struct {
@@ -17,6 +19,11 @@ type RewardTransferRequest struct {
 	ActivityID string `json:"activity_id"`
 	UserDID    string `json:"user_did"`
 	AdminDID   string `json:"admin_did"`
+}
+type ActivityData struct {
+	ActivityID   string `json:"activity_id"`
+	BlockHash    string `json:"block_hash"`
+	RewardPoints int    `json:"reward_points"`
 }
 
 type TransferResponse struct {
@@ -130,4 +137,25 @@ func HandleAdminRewardTransfer(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(finalResp)
+}
+
+func HandleGetAllActivities(w http.ResponseWriter, r *http.Request) {
+	const filePath = "/home/rubix/github/ymca-wellness-cafe/dappServer/test.json"
+
+	file, err := os.ReadFile(filePath)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to read file: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	var activities []ActivityData
+	if err := json.Unmarshal(file, &activities); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to parse JSON: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(activities); err != nil {
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
 }

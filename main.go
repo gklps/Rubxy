@@ -33,6 +33,7 @@ func main() {
 	// Protected admin routes
 	r.With(middleware.Authenticate(cfg)).Post("/admin/activity/add", proxy.HandleAdminActivityAdd)
 	r.With(middleware.Authenticate(cfg)).Post("/admin/reward/transfer", proxy.HandleAdminRewardTransfer)
+	r.With(middleware.Authenticate(cfg)).Get("/admin/activity/list", proxy.HandleGetAllActivities)
 
 	// Protected routes
 	target := "http://localhost:20000"
