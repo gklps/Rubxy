@@ -84,7 +84,7 @@ func HandleAdminActivityAdd(w http.ResponseWriter, r *http.Request) {
 
 	finalResp := FinalResponse{
 		Status:  sctData.Status,
-		Message: sctData.Message,
+		Message: "Activity added successfully",
 		Result:  sctData.SCTDataReply,
 	}
 
