@@ -7,10 +7,10 @@ import (
 	"net/http"
 )
 
-type ActivityRequest struct {
-	ActivityID string `json:"activity_id"`
-	UserDID    string `json:"user_did"`
-	AdminDID   string `json:"admin_did"`
+type ActivityAddRequest struct {
+	ActivityID   string `json:"activity_id"`
+	RewardPoints int    `json:"reward_points"`
+	AdminDID     string `json:"admin_did"`
 }
 
 type RewardTransferRequest struct {
@@ -38,61 +38,58 @@ type FinalResponse struct {
 }
 
 func HandleAdminActivityAdd(w http.ResponseWriter, r *http.Request) {
-	var activityReq ActivityRequest
+	var activityReq ActivityAddRequest
 	if err := json.NewDecoder(r.Body).Decode(&activityReq); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	// Marshal the request to JSON
 	reqBody, err := json.Marshal(activityReq)
 	if err != nil {
 		http.Error(w, "Failed to marshal request", http.StatusInternalServerError)
 		return
 	}
 
-	// Forward the request to the target API
-	resp, err := http.Post("http://localhost:9000/api/rewards/transfer", "application/json", bytes.NewBuffer(reqBody))
+	resp, err := http.Post("http://localhost:9000/api/activity/add", "application/json", bytes.NewBuffer(reqBody))
 	if err != nil {
 		http.Error(w, "Failed to forward request", http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
 
-	// Read the response body
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		http.Error(w, "Failed to read response", http.StatusInternalServerError)
 		return
 	}
 
-	// Parse the outer JSON
 	var transferResp TransferResponse
 	if err := json.Unmarshal(body, &transferResp); err != nil {
 		http.Error(w, "Failed to parse response", http.StatusInternalServerError)
 		return
 	}
 
-	// Parse the inner JSON (the 'data' field)
 	var sctData SCTData
 	if err := json.Unmarshal([]byte(transferResp.Data), &sctData); err != nil {
-		http.Error(w, "Failed to parse inner response", http.StatusInternalServerError)
+		// if 'data' is null or invalid, return a fallback error
+		finalResp := FinalResponse{
+			Status:  false,
+			Message: transferResp.Message,
+			Result:  nil,
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(finalResp)
 		return
 	}
 
-	// Construct the final response
 	finalResp := FinalResponse{
 		Status:  sctData.Status,
 		Message: sctData.Message,
 		Result:  sctData.SCTDataReply,
 	}
 
-	// Set the response header and write the response
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(finalResp); err != nil {
-		http.Error(w, "Failed to write response", http.StatusInternalServerError)
-		return
-	}
+	_ = json.NewEncoder(w).Encode(finalResp)
 }
 
 func HandleAdminRewardTransfer(w http.ResponseWriter, r *http.Request) {
