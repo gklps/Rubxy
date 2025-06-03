@@ -20,6 +20,11 @@ type RewardTransferRequest struct {
 	UserDID    string `json:"user_did"`
 	AdminDID   string `json:"admin_did"`
 }
+type AdminAddRequest struct {
+	NewAdminDID      string `json:"new_admin_did"`
+	ExistingAdminDID string `json:"existing_admin_did"`
+}
+
 type ActivityData struct {
 	ActivityID   string `json:"activity_id"`
 	BlockHash    string `json:"block_hash"`
@@ -157,5 +162,58 @@ func HandleGetAllActivities(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(activities); err != nil {
 		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
+}
+
+func HandleAdminAddUser(w http.ResponseWriter, r *http.Request) {
+	var req AdminAddRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	reqBody, err := json.Marshal(req)
+	if err != nil {
+		http.Error(w, "Failed to marshal request", http.StatusInternalServerError)
+		return
+	}
+
+	resp, err := http.Post("http://localhost:9000/api/admin/add", "application/json", bytes.NewBuffer(reqBody))
+	if err != nil {
+		http.Error(w, "Failed to forward request", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		http.Error(w, "Failed to read response", http.StatusInternalServerError)
+		return
+	}
+
+	// Parse the initial response
+	var transferResp TransferResponse
+	if err := json.Unmarshal(body, &transferResp); err != nil {
+		http.Error(w, "Failed to parse response", http.StatusInternalServerError)
+		return
+	}
+
+	// Now parse the `data` string field (which is an escaped JSON string)
+	var sctData SCTData
+	if err := json.Unmarshal([]byte(transferResp.Data), &sctData); err != nil {
+		http.Error(w, "Failed to parse inner JSON from data", http.StatusInternalServerError)
+		return
+	}
+
+	// Final clean response
+	finalResp := FinalResponse{
+		Status:  sctData.Status,
+		Message: sctData.Message,
+		Result:  sctData.SCTDataReply,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(finalResp); err != nil {
+		http.Error(w, "Failed to encode final response", http.StatusInternalServerError)
 	}
 }
