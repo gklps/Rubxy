@@ -6,7 +6,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
+
+	"github.com/go-chi/chi/v5"
+	"rubxy/logger"
 )
 
 type ActivityAddRequest struct {
@@ -215,5 +219,56 @@ func HandleAdminAddUser(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(finalResp); err != nil {
 		http.Error(w, "Failed to encode final response", http.StatusInternalServerError)
+	}
+}
+
+func HandleUserPayouts(w http.ResponseWriter, r *http.Request) {
+	// Extract user_did from URL path
+	userDID := chi.URLParam(r, "user_did")
+	if userDID == "" {
+		http.Error(w, "user_did is required", http.StatusBadRequest)
+		return
+	}
+
+	// Build the target URL with proper query encoding
+	targetURL := fmt.Sprintf("http://localhost:20000/api/get-ft-info-by-did?did=%s", url.QueryEscape(userDID))
+
+	// Create a new request to the target server
+	req, err := http.NewRequest(r.Method, targetURL, r.Body)
+	if err != nil {
+		http.Error(w, "Failed to create request", http.StatusInternalServerError)
+		return
+	}
+
+	// Copy headers from original request
+	for key, values := range r.Header {
+		for _, value := range values {
+			req.Header.Add(key, value)
+		}
+	}
+
+	// Make the request to the target server
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		http.Error(w, "Failed to forward request", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	// Copy response headers
+	for key, values := range resp.Header {
+		for _, value := range values {
+			w.Header().Add(key, value)
+		}
+	}
+
+	// Set status code
+	w.WriteHeader(resp.StatusCode)
+
+	// Copy response body
+	_, err = io.Copy(w, resp.Body)
+	if err != nil {
+		logger.ErrorLogger.Printf("Failed to copy response body: %v", err)
 	}
 }
