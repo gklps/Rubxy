@@ -54,35 +54,60 @@ type FinalResponse struct {
 	Result  interface{} `json:"result"`
 }
 
+// sendErrorResponse sends an error response using the FinalResponse format
+func sendErrorResponse(w http.ResponseWriter, statusCode int, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+
+	errorResp := FinalResponse{
+		Status:  false,
+		Message: message,
+		Result:  nil,
+	}
+
+	// Encode to buffer first to handle errors before writing to response
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(errorResp); err != nil {
+		logger.ErrorLogger.Printf("Failed to encode error response: %v", err)
+		// Fallback to plain text if JSON encoding fails
+		http.Error(w, message, statusCode)
+		return
+	}
+
+	if _, err := w.Write(buf.Bytes()); err != nil {
+		logger.ErrorLogger.Printf("Failed to write error response: %v", err)
+	}
+}
+
 func HandleAdminActivityAdd(w http.ResponseWriter, r *http.Request) {
 	var activityReq ActivityAddRequest
 	if err := json.NewDecoder(r.Body).Decode(&activityReq); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		sendErrorResponse(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
 	reqBody, err := json.Marshal(activityReq)
 	if err != nil {
-		http.Error(w, "Failed to marshal request", http.StatusInternalServerError)
+		sendErrorResponse(w, http.StatusInternalServerError, "Failed to marshal request")
 		return
 	}
 
 	resp, err := http.Post("http://localhost:9000/api/activity/add", "application/json", bytes.NewBuffer(reqBody))
 	if err != nil {
-		http.Error(w, "Failed to forward request", http.StatusBadGateway)
+		sendErrorResponse(w, http.StatusBadGateway, "Failed to forward request")
 		return
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		http.Error(w, "Failed to read response", http.StatusInternalServerError)
+		sendErrorResponse(w, http.StatusInternalServerError, "Failed to read response")
 		return
 	}
 
 	var transferResp TransferResponse
 	if err := json.Unmarshal(body, &transferResp); err != nil {
-		http.Error(w, "Failed to parse response", http.StatusInternalServerError)
+		sendErrorResponse(w, http.StatusInternalServerError, "Failed to parse response")
 		return
 	}
 
@@ -109,7 +134,7 @@ func HandleAdminActivityAdd(w http.ResponseWriter, r *http.Request) {
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(finalResp); err != nil {
 		logger.ErrorLogger.Printf("[ADMIN ACTIVITY ADD] Failed to encode final response: %v", err)
-		http.Error(w, "Failed to encode final response", http.StatusInternalServerError)
+		sendErrorResponse(w, http.StatusInternalServerError, "Failed to encode final response")
 		return
 	}
 
@@ -128,7 +153,7 @@ func HandleAdminRewardTransfer(w http.ResponseWriter, r *http.Request) {
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
 		logger.ErrorLogger.Printf("[ADMIN PAYOUTS] Failed to read request body: %v", err)
-		http.Error(w, "Failed to read request body", http.StatusBadRequest)
+		sendErrorResponse(w, http.StatusBadRequest, "Failed to read request body")
 		return
 	}
 	logger.InfoLogger.Printf("[ADMIN PAYOUTS] Request body: %s", string(bodyBytes))
@@ -140,7 +165,7 @@ func HandleAdminRewardTransfer(w http.ResponseWriter, r *http.Request) {
 	var rawPayload map[string]interface{}
 	if err := json.NewDecoder(r.Body).Decode(&rawPayload); err != nil {
 		logger.ErrorLogger.Printf("[ADMIN PAYOUTS] Failed to decode request body: %v", err)
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		sendErrorResponse(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
@@ -148,14 +173,14 @@ func HandleAdminRewardTransfer(w http.ResponseWriter, r *http.Request) {
 	activityIDRaw, exists := rawPayload["activity_id"]
 	if !exists {
 		logger.ErrorLogger.Printf("[ADMIN PAYOUTS] activity_id field is missing")
-		http.Error(w, "activity_id field is required", http.StatusBadRequest)
+		sendErrorResponse(w, http.StatusBadRequest, "activity_id field is required")
 		return
 	}
 
 	// Check if activity_id is a string (which we don't accept)
 	if _, isString := activityIDRaw.(string); isString {
 		logger.ErrorLogger.Printf("[ADMIN PAYOUTS] activity_id must be an array, not a string")
-		http.Error(w, "activity_id must be an array, not a string", http.StatusBadRequest)
+		sendErrorResponse(w, http.StatusBadRequest, "activity_id must be an array, not a string")
 		return
 	}
 
@@ -163,14 +188,14 @@ func HandleAdminRewardTransfer(w http.ResponseWriter, r *http.Request) {
 	activityIDArray, isArray := activityIDRaw.([]interface{})
 	if !isArray {
 		logger.ErrorLogger.Printf("[ADMIN PAYOUTS] activity_id must be an array")
-		http.Error(w, "activity_id must be an array", http.StatusBadRequest)
+		sendErrorResponse(w, http.StatusBadRequest, "activity_id must be an array")
 		return
 	}
 
 	// Validate that the array is not empty
 	if len(activityIDArray) == 0 {
 		logger.ErrorLogger.Printf("[ADMIN PAYOUTS] activity_id array cannot be empty")
-		http.Error(w, "activity_id array cannot be empty", http.StatusBadRequest)
+		sendErrorResponse(w, http.StatusBadRequest, "activity_id array cannot be empty")
 		return
 	}
 
@@ -180,7 +205,7 @@ func HandleAdminRewardTransfer(w http.ResponseWriter, r *http.Request) {
 		activityIDStr, ok := item.(string)
 		if !ok {
 			logger.ErrorLogger.Printf("[ADMIN PAYOUTS] activity_id[%d] must be a string", i)
-			http.Error(w, fmt.Sprintf("activity_id[%d] must be a string", i), http.StatusBadRequest)
+			sendErrorResponse(w, http.StatusBadRequest, fmt.Sprintf("activity_id[%d] must be a string", i))
 			return
 		}
 		activityIDs = append(activityIDs, activityIDStr)
@@ -191,7 +216,7 @@ func HandleAdminRewardTransfer(w http.ResponseWriter, r *http.Request) {
 	var reqPayload RewardTransferRequest
 	if err := json.NewDecoder(r.Body).Decode(&reqPayload); err != nil {
 		logger.ErrorLogger.Printf("[ADMIN PAYOUTS] Failed to decode request body: %v", err)
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		sendErrorResponse(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
@@ -201,7 +226,7 @@ func HandleAdminRewardTransfer(w http.ResponseWriter, r *http.Request) {
 	// Marshal the payload to JSON
 	jsonData, err := json.Marshal(reqPayload)
 	if err != nil {
-		http.Error(w, "Failed to marshal request", http.StatusInternalServerError)
+		sendErrorResponse(w, http.StatusInternalServerError, "Failed to marshal request")
 		return
 	}
 
@@ -210,7 +235,7 @@ func HandleAdminRewardTransfer(w http.ResponseWriter, r *http.Request) {
 	resp, err := http.Post("http://localhost:9000/api/rewards/transfer", "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
 		logger.ErrorLogger.Printf("[ADMIN PAYOUTS] Failed to call external API: %v", err)
-		http.Error(w, "Failed to call external API", http.StatusBadGateway)
+		sendErrorResponse(w, http.StatusBadGateway, "Failed to call external API")
 		return
 	}
 	defer resp.Body.Close()
@@ -221,7 +246,7 @@ func HandleAdminRewardTransfer(w http.ResponseWriter, r *http.Request) {
 	var apiResp map[string]interface{}
 	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
 		logger.ErrorLogger.Printf("[ADMIN PAYOUTS] Failed to parse external API response: %v", err)
-		http.Error(w, "Failed to parse external API response", http.StatusInternalServerError)
+		sendErrorResponse(w, http.StatusInternalServerError, "Failed to parse external API response")
 		return
 	}
 
@@ -240,7 +265,7 @@ func HandleAdminRewardTransfer(w http.ResponseWriter, r *http.Request) {
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(finalResp); err != nil {
 		logger.ErrorLogger.Printf("[ADMIN PAYOUTS] Failed to encode final response: %v", err)
-		http.Error(w, "Failed to encode final response", http.StatusInternalServerError)
+		sendErrorResponse(w, http.StatusInternalServerError, "Failed to encode final response")
 		return
 	}
 
@@ -255,59 +280,68 @@ func HandleGetAllActivities(w http.ResponseWriter, r *http.Request) {
 
 	file, err := os.ReadFile(filePath)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to read file: %v", err), http.StatusInternalServerError)
+		sendErrorResponse(w, http.StatusInternalServerError, fmt.Sprintf("Failed to read file: %v", err))
 		return
 	}
 
 	var activities []ActivityData
 	if err := json.Unmarshal(file, &activities); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to parse JSON: %v", err), http.StatusInternalServerError)
+		sendErrorResponse(w, http.StatusInternalServerError, fmt.Sprintf("Failed to parse JSON: %v", err))
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(activities); err != nil {
-		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+
+	// Encode to buffer first to handle errors before writing to response
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(activities); err != nil {
+		logger.ErrorLogger.Printf("[ADMIN ACTIVITY LIST] Failed to encode response: %v", err)
+		sendErrorResponse(w, http.StatusInternalServerError, "Failed to encode response")
+		return
+	}
+
+	if _, err := w.Write(buf.Bytes()); err != nil {
+		logger.ErrorLogger.Printf("[ADMIN ACTIVITY LIST] Failed to write response: %v", err)
 	}
 }
 
 func HandleAdminAddUser(w http.ResponseWriter, r *http.Request) {
 	var req AdminAddRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		sendErrorResponse(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
 	reqBody, err := json.Marshal(req)
 	if err != nil {
-		http.Error(w, "Failed to marshal request", http.StatusInternalServerError)
+		sendErrorResponse(w, http.StatusInternalServerError, "Failed to marshal request")
 		return
 	}
 
 	resp, err := http.Post("http://localhost:9000/api/admin/add", "application/json", bytes.NewBuffer(reqBody))
 	if err != nil {
-		http.Error(w, "Failed to forward request", http.StatusBadGateway)
+		sendErrorResponse(w, http.StatusBadGateway, "Failed to forward request")
 		return
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		http.Error(w, "Failed to read response", http.StatusInternalServerError)
+		sendErrorResponse(w, http.StatusInternalServerError, "Failed to read response")
 		return
 	}
 
 	// Parse the initial response
 	var transferResp TransferResponse
 	if err := json.Unmarshal(body, &transferResp); err != nil {
-		http.Error(w, "Failed to parse response", http.StatusInternalServerError)
+		sendErrorResponse(w, http.StatusInternalServerError, "Failed to parse response")
 		return
 	}
 
 	// Now parse the `data` string field (which is an escaped JSON string)
 	var sctData SCTData
 	if err := json.Unmarshal([]byte(transferResp.Data), &sctData); err != nil {
-		http.Error(w, "Failed to parse inner JSON from data", http.StatusInternalServerError)
+		sendErrorResponse(w, http.StatusInternalServerError, "Failed to parse inner JSON from data")
 		return
 	}
 
@@ -322,7 +356,7 @@ func HandleAdminAddUser(w http.ResponseWriter, r *http.Request) {
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(finalResp); err != nil {
 		logger.ErrorLogger.Printf("[ADMIN ADD USER] Failed to encode final response: %v", err)
-		http.Error(w, "Failed to encode final response", http.StatusInternalServerError)
+		sendErrorResponse(w, http.StatusInternalServerError, "Failed to encode final response")
 		return
 	}
 
@@ -336,7 +370,7 @@ func HandleUserPayouts(w http.ResponseWriter, r *http.Request) {
 	// Extract user_did from URL path
 	userDID := chi.URLParam(r, "user_did")
 	if userDID == "" {
-		http.Error(w, "user_did is required", http.StatusBadRequest)
+		sendErrorResponse(w, http.StatusBadRequest, "user_did is required")
 		return
 	}
 
@@ -351,7 +385,7 @@ func HandleUserPayouts(w http.ResponseWriter, r *http.Request) {
 	}
 	req, err := http.NewRequest(r.Method, targetURL, body)
 	if err != nil {
-		http.Error(w, "Failed to create request", http.StatusInternalServerError)
+		sendErrorResponse(w, http.StatusInternalServerError, "Failed to create request")
 		return
 	}
 
@@ -366,7 +400,7 @@ func HandleUserPayouts(w http.ResponseWriter, r *http.Request) {
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		http.Error(w, "Failed to forward request", http.StatusBadGateway)
+		sendErrorResponse(w, http.StatusBadGateway, "Failed to forward request")
 		return
 	}
 	defer resp.Body.Close()
