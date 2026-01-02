@@ -21,9 +21,9 @@ type ActivityAddRequest struct {
 }
 
 type RewardTransferRequest struct {
-	ActivityID string `json:"activity_id"`
-	UserDID    string `json:"user_did"`
-	AdminDID   string `json:"admin_did"`
+	ActivityID []string `json:"activity_id"`
+	UserDID    string   `json:"user_did"`
+	AdminDID   string   `json:"admin_did"`
 }
 type AdminAddRequest struct {
 	NewAdminDID      string `json:"new_admin_did"`
@@ -136,6 +136,58 @@ func HandleAdminRewardTransfer(w http.ResponseWriter, r *http.Request) {
 	// Recreate body for JSON decoder
 	r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 
+	// First decode into a map to validate activity_id is an array
+	var rawPayload map[string]interface{}
+	if err := json.NewDecoder(r.Body).Decode(&rawPayload); err != nil {
+		logger.ErrorLogger.Printf("[ADMIN PAYOUTS] Failed to decode request body: %v", err)
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// Validate that activity_id is an array, not a string
+	activityIDRaw, exists := rawPayload["activity_id"]
+	if !exists {
+		logger.ErrorLogger.Printf("[ADMIN PAYOUTS] activity_id field is missing")
+		http.Error(w, "activity_id field is required", http.StatusBadRequest)
+		return
+	}
+
+	// Check if activity_id is a string (which we don't accept)
+	if _, isString := activityIDRaw.(string); isString {
+		logger.ErrorLogger.Printf("[ADMIN PAYOUTS] activity_id must be an array, not a string")
+		http.Error(w, "activity_id must be an array, not a string", http.StatusBadRequest)
+		return
+	}
+
+	// Check if activity_id is an array
+	activityIDArray, isArray := activityIDRaw.([]interface{})
+	if !isArray {
+		logger.ErrorLogger.Printf("[ADMIN PAYOUTS] activity_id must be an array")
+		http.Error(w, "activity_id must be an array", http.StatusBadRequest)
+		return
+	}
+
+	// Validate that the array is not empty
+	if len(activityIDArray) == 0 {
+		logger.ErrorLogger.Printf("[ADMIN PAYOUTS] activity_id array cannot be empty")
+		http.Error(w, "activity_id array cannot be empty", http.StatusBadRequest)
+		return
+	}
+
+	// Convert []interface{} to []string
+	activityIDs := make([]string, 0, len(activityIDArray))
+	for i, item := range activityIDArray {
+		activityIDStr, ok := item.(string)
+		if !ok {
+			logger.ErrorLogger.Printf("[ADMIN PAYOUTS] activity_id[%d] must be a string", i)
+			http.Error(w, fmt.Sprintf("activity_id[%d] must be a string", i), http.StatusBadRequest)
+			return
+		}
+		activityIDs = append(activityIDs, activityIDStr)
+	}
+
+	// Now decode into the struct with validated data
+	r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 	var reqPayload RewardTransferRequest
 	if err := json.NewDecoder(r.Body).Decode(&reqPayload); err != nil {
 		logger.ErrorLogger.Printf("[ADMIN PAYOUTS] Failed to decode request body: %v", err)
@@ -143,7 +195,7 @@ func HandleAdminRewardTransfer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	logger.InfoLogger.Printf("[ADMIN PAYOUTS] Parsed payload - ActivityID: %s, UserDID: %s, AdminDID: %s",
+	logger.InfoLogger.Printf("[ADMIN PAYOUTS] Parsed payload - ActivityID: %v, UserDID: %s, AdminDID: %s",
 		reqPayload.ActivityID, reqPayload.UserDID, reqPayload.AdminDID)
 
 	// Marshal the payload to JSON
@@ -183,7 +235,7 @@ func HandleAdminRewardTransfer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	logger.InfoLogger.Printf("[ADMIN PAYOUTS] Sending final response: %+v", finalResp)
-	
+
 	// Encode to buffer first to handle errors before writing to response
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(finalResp); err != nil {
