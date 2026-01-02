@@ -30,11 +30,15 @@ func main() {
 	r.Post("/refresh-token", auth.HandleRefresh(cfg))
 	r.Post("/register", auth.HandleRegister())
 	r.Post("/logout", auth.HandleLogout())
+
 	// Protected admin routes
-	r.With(middleware.Authenticate(cfg)).Post("/admin/activity/add", proxy.HandleAdminActivityAdd)
-	r.With(middleware.Authenticate(cfg)).Post("/admin/payouts", proxy.HandleAdminRewardTransfer)
-	r.With(middleware.Authenticate(cfg)).Get("/admin/activity/list", proxy.HandleGetAllActivities)
-	r.With(middleware.Authenticate(cfg)).Post("/admin/user/add", proxy.HandleAdminAddUser)
+	r.Route("/admin", func(admin chi.Router) {
+		admin.Use(middleware.Authenticate(cfg))
+		admin.Post("/activity/add", proxy.HandleAdminActivityAdd)
+		admin.Post("/payouts", proxy.HandleAdminRewardTransfer)
+		admin.Get("/activity/list", proxy.HandleGetAllActivities)
+		admin.Post("/user/add", proxy.HandleAdminAddUser)
+	})
 
 	// Protected user routes
 	r.With(middleware.Authenticate(cfg)).Get("/users/{user_did}/payouts", proxy.HandleUserPayouts)
@@ -45,6 +49,12 @@ func main() {
 	//r.With(middleware.Authenticate(cfg)).Handle("/*", proxyHandler)
 	r.Route("/api", func(api chi.Router) {
 		api.With(middleware.Authenticate(cfg)).Handle("/*", proxyHandler)
+	})
+
+	// 404 handler for debugging
+	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
+		logger.InfoLogger.Printf("[404] Method: %s, Path: %s, RemoteAddr: %s", r.Method, r.URL.Path, r.RemoteAddr)
+		http.Error(w, "404 page not found", http.StatusNotFound)
 	})
 
 	log.Printf("Server running at %s\n", cfg.Port)

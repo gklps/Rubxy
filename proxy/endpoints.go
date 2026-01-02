@@ -9,8 +9,9 @@ import (
 	"net/url"
 	"os"
 
-	"github.com/go-chi/chi/v5"
 	"rubxy/logger"
+
+	"github.com/go-chi/chi/v5"
 )
 
 type ActivityAddRequest struct {
@@ -109,11 +110,31 @@ func HandleAdminActivityAdd(w http.ResponseWriter, r *http.Request) {
 }
 
 func HandleAdminRewardTransfer(w http.ResponseWriter, r *http.Request) {
+	// Log incoming request
+	logger.InfoLogger.Printf("[ADMIN PAYOUTS] Incoming request - Method: %s, Path: %s, RemoteAddr: %s", r.Method, r.URL.Path, r.RemoteAddr)
+	logger.InfoLogger.Printf("[ADMIN PAYOUTS] Headers: %v", r.Header)
+
+	// Read body for logging (we'll need to recreate it for decoding)
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		logger.ErrorLogger.Printf("[ADMIN PAYOUTS] Failed to read request body: %v", err)
+		http.Error(w, "Failed to read request body", http.StatusBadRequest)
+		return
+	}
+	logger.InfoLogger.Printf("[ADMIN PAYOUTS] Request body: %s", string(bodyBytes))
+
+	// Recreate body for JSON decoder
+	r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+
 	var reqPayload RewardTransferRequest
 	if err := json.NewDecoder(r.Body).Decode(&reqPayload); err != nil {
+		logger.ErrorLogger.Printf("[ADMIN PAYOUTS] Failed to decode request body: %v", err)
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
+
+	logger.InfoLogger.Printf("[ADMIN PAYOUTS] Parsed payload - ActivityID: %s, UserDID: %s, AdminDID: %s",
+		reqPayload.ActivityID, reqPayload.UserDID, reqPayload.AdminDID)
 
 	// Marshal the payload to JSON
 	jsonData, err := json.Marshal(reqPayload)
@@ -123,19 +144,26 @@ func HandleAdminRewardTransfer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Send POST request to the external API
+	logger.InfoLogger.Printf("[ADMIN PAYOUTS] Forwarding request to: http://localhost:9000/api/rewards/transfer")
 	resp, err := http.Post("http://localhost:9000/api/rewards/transfer", "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
+		logger.ErrorLogger.Printf("[ADMIN PAYOUTS] Failed to call external API: %v", err)
 		http.Error(w, "Failed to call external API", http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
 
+	logger.InfoLogger.Printf("[ADMIN PAYOUTS] External API response status: %d", resp.StatusCode)
+
 	// Read and parse the response
 	var apiResp map[string]interface{}
 	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		logger.ErrorLogger.Printf("[ADMIN PAYOUTS] Failed to parse external API response: %v", err)
 		http.Error(w, "Failed to parse external API response", http.StatusInternalServerError)
 		return
 	}
+
+	logger.InfoLogger.Printf("[ADMIN PAYOUTS] External API response: %+v", apiResp)
 
 	// Prepare the final response
 	finalResp := map[string]interface{}{
@@ -144,6 +172,7 @@ func HandleAdminRewardTransfer(w http.ResponseWriter, r *http.Request) {
 		"result":  apiResp["data"],
 	}
 
+	logger.InfoLogger.Printf("[ADMIN PAYOUTS] Sending final response: %+v", finalResp)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(finalResp)
 }
