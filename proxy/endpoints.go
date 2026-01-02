@@ -105,8 +105,18 @@ func HandleAdminActivityAdd(w http.ResponseWriter, r *http.Request) {
 		Result:  sctData.SCTDataReply,
 	}
 
+	// Encode to buffer first to handle errors before writing to response
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(finalResp); err != nil {
+		logger.ErrorLogger.Printf("[ADMIN ACTIVITY ADD] Failed to encode final response: %v", err)
+		http.Error(w, "Failed to encode final response", http.StatusInternalServerError)
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(finalResp)
+	if _, err := w.Write(buf.Bytes()); err != nil {
+		logger.ErrorLogger.Printf("[ADMIN ACTIVITY ADD] Failed to write response: %v", err)
+	}
 }
 
 func HandleAdminRewardTransfer(w http.ResponseWriter, r *http.Request) {
@@ -173,8 +183,19 @@ func HandleAdminRewardTransfer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	logger.InfoLogger.Printf("[ADMIN PAYOUTS] Sending final response: %+v", finalResp)
+	
+	// Encode to buffer first to handle errors before writing to response
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(finalResp); err != nil {
+		logger.ErrorLogger.Printf("[ADMIN PAYOUTS] Failed to encode final response: %v", err)
+		http.Error(w, "Failed to encode final response", http.StatusInternalServerError)
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(finalResp)
+	if _, err := w.Write(buf.Bytes()); err != nil {
+		logger.ErrorLogger.Printf("[ADMIN PAYOUTS] Failed to write response: %v", err)
+	}
 }
 
 func HandleGetAllActivities(w http.ResponseWriter, r *http.Request) {
@@ -245,9 +266,17 @@ func HandleAdminAddUser(w http.ResponseWriter, r *http.Request) {
 		Result:  sctData.SCTDataReply,
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(finalResp); err != nil {
+	// Encode to buffer first to handle errors before writing to response
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(finalResp); err != nil {
+		logger.ErrorLogger.Printf("[ADMIN ADD USER] Failed to encode final response: %v", err)
 		http.Error(w, "Failed to encode final response", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if _, err := w.Write(buf.Bytes()); err != nil {
+		logger.ErrorLogger.Printf("[ADMIN ADD USER] Failed to write response: %v", err)
 	}
 }
 
@@ -263,7 +292,12 @@ func HandleUserPayouts(w http.ResponseWriter, r *http.Request) {
 	targetURL := fmt.Sprintf("http://localhost:20000/api/get-ft-info-by-did?did=%s", url.QueryEscape(userDID))
 
 	// Create a new request to the target server
-	req, err := http.NewRequest(r.Method, targetURL, r.Body)
+	// GET requests should not have a body per HTTP semantics
+	var body io.Reader
+	if r.Method != "GET" && r.Method != "HEAD" {
+		body = r.Body
+	}
+	req, err := http.NewRequest(r.Method, targetURL, body)
 	if err != nil {
 		http.Error(w, "Failed to create request", http.StatusInternalServerError)
 		return
