@@ -26,6 +26,9 @@ func main() {
 
 	r := chi.NewRouter()
 
+	// Clean paths (trim trailing spaces) - apply globally
+	r.Use(middleware.CleanPath)
+
 	// Public routes
 	r.Post("/get-token", auth.HandleToken(cfg))
 	r.Post("/refresh-token", auth.HandleRefresh(cfg))

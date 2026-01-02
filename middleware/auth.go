@@ -46,3 +46,12 @@ func GetUserFromContext(r *http.Request) string {
 	user, _ := r.Context().Value(userContextKey).(string)
 	return user
 }
+
+// CleanPath trims trailing spaces and normalizes the request path
+func CleanPath(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Trim trailing spaces from the path
+		r.URL.Path = strings.TrimRight(r.URL.Path, " ")
+		next.ServeHTTP(w, r)
+	})
+}
