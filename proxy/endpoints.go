@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bytes"
+	"time"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -52,6 +53,14 @@ type FinalResponse struct {
 	Status  bool        `json:"status"`
 	Message string      `json:"message"`
 	Result  interface{} `json:"result"`
+}
+
+// getStringValue safely extracts a string value from interface{}
+func getStringValue(v interface{}, defaultValue string) string {
+	if str, ok := v.(string); ok {
+		return str
+	}
+	return defaultValue
 }
 
 // sendErrorResponse sends an error response using the FinalResponse format
@@ -230,17 +239,34 @@ func HandleAdminRewardTransfer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Send POST request to the external API
+	// Send POST request to the external API with timeout (5 minutes)
 	logger.InfoLogger.Printf("[ADMIN PAYOUTS] Forwarding request to: http://localhost:9000/api/rewards/transfer")
-	resp, err := http.Post("http://localhost:9000/api/rewards/transfer", "application/json", bytes.NewBuffer(jsonData))
+
+	client := &http.Client{
+		Timeout: 5 * time.Minute,
+	}
+
+	resp, err := client.Post("http://localhost:9000/api/rewards/transfer", "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
 		logger.ErrorLogger.Printf("[ADMIN PAYOUTS] Failed to call external API: %v", err)
-		sendErrorResponse(w, http.StatusBadGateway, "Failed to call external API")
+		if urlErr, ok := err.(*url.Error); ok && urlErr.Timeout() {
+			sendErrorResponse(w, http.StatusGatewayTimeout, "External API request timed out")
+		} else {
+			sendErrorResponse(w, http.StatusBadGateway, fmt.Sprintf("Failed to call external API: %v", err))
+		}
 		return
 	}
 	defer resp.Body.Close()
 
 	logger.InfoLogger.Printf("[ADMIN PAYOUTS] External API response status: %d", resp.StatusCode)
+
+	// Check if the external API returned an error status
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		logger.ErrorLogger.Printf("[ADMIN PAYOUTS] External API returned error status %d: %s", resp.StatusCode, string(bodyBytes))
+		sendErrorResponse(w, resp.StatusCode, fmt.Sprintf("External API returned error: %s", string(bodyBytes)))
+		return
+	}
 
 	// Read and parse the response
 	var apiResp map[string]interface{}
@@ -252,11 +278,35 @@ func HandleAdminRewardTransfer(w http.ResponseWriter, r *http.Request) {
 
 	logger.InfoLogger.Printf("[ADMIN PAYOUTS] External API response: %+v", apiResp)
 
-	// Prepare the final response
-	finalResp := map[string]interface{}{
-		"status":  true,
-		"message": apiResp["message"],
-		"result":  apiResp["data"],
+	// Check if the API response indicates failure
+	if status, ok := apiResp["status"].(string); ok && status != "success" {
+		message := "Reward transfer failed"
+		if msg, ok := apiResp["message"].(string); ok {
+			message = msg
+		}
+		logger.ErrorLogger.Printf("[ADMIN PAYOUTS] External API returned failure status: %s", status)
+		sendErrorResponse(w, http.StatusBadGateway, message)
+		return
+	}
+
+	// Prepare the final response with all relevant fields
+	result := make(map[string]interface{})
+	if data, ok := apiResp["data"].(map[string]interface{}); ok {
+		result = data
+	}
+
+	// Include transaction_id and block_id if present
+	if transactionID, ok := apiResp["transaction_id"].(string); ok && transactionID != "" {
+		result["transaction_id"] = transactionID
+	}
+	if blockID, ok := apiResp["block_id"].(string); ok && blockID != "" {
+		result["block_id"] = blockID
+	}
+
+	finalResp := FinalResponse{
+		Status:  true,
+		Message: getStringValue(apiResp["message"], "Reward transfer completed successfully"),
+		Result:  result,
 	}
 
 	logger.InfoLogger.Printf("[ADMIN PAYOUTS] Sending final response: %+v", finalResp)
