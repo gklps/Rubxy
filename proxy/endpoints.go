@@ -2,13 +2,13 @@ package proxy
 
 import (
 	"bytes"
-	"time"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
+	"time"
 
 	"rubxy/logger"
 
@@ -261,12 +261,15 @@ func HandleAdminRewardTransfer(w http.ResponseWriter, r *http.Request) {
 	logger.InfoLogger.Printf("[ADMIN PAYOUTS] External API response status: %d", resp.StatusCode)
 
 	// Check if the external API returned an error status
+	// Accept 200 (OK), 201 (Created), 202 (Accepted), and other 2xx status codes as success
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		bodyBytes, _ := io.ReadAll(resp.Body)
 		logger.ErrorLogger.Printf("[ADMIN PAYOUTS] External API returned error status %d: %s", resp.StatusCode, string(bodyBytes))
 		sendErrorResponse(w, resp.StatusCode, fmt.Sprintf("External API returned error: %s", string(bodyBytes)))
 		return
 	}
+
+	logger.InfoLogger.Printf("[ADMIN PAYOUTS] External API returned success status: %d", resp.StatusCode)
 
 	// Read and parse the response
 	var apiResp map[string]interface{}
@@ -279,14 +282,23 @@ func HandleAdminRewardTransfer(w http.ResponseWriter, r *http.Request) {
 	logger.InfoLogger.Printf("[ADMIN PAYOUTS] External API response: %+v", apiResp)
 
 	// Check if the API response indicates failure
-	if status, ok := apiResp["status"].(string); ok && status != "success" {
-		message := "Reward transfer failed"
-		if msg, ok := apiResp["message"].(string); ok {
-			message = msg
+	// For 202 (Accepted) status, we accept the response regardless of JSON status field
+	// since 202 means the request was accepted and is being processed
+	if resp.StatusCode != 202 {
+		if status, ok := apiResp["status"].(string); ok && status != "success" {
+			message := "Reward transfer failed"
+			if msg, ok := apiResp["message"].(string); ok {
+				message = msg
+			}
+			logger.ErrorLogger.Printf("[ADMIN PAYOUTS] External API returned failure status: %s", status)
+			sendErrorResponse(w, http.StatusBadGateway, message)
+			return
 		}
-		logger.ErrorLogger.Printf("[ADMIN PAYOUTS] External API returned failure status: %s", status)
-		sendErrorResponse(w, http.StatusBadGateway, message)
-		return
+	} else {
+		// For 202 responses, log the status but still process it as success
+		if status, ok := apiResp["status"].(string); ok {
+			logger.InfoLogger.Printf("[ADMIN PAYOUTS] External API returned 202 with status: %s - processing as success", status)
+		}
 	}
 
 	// Prepare the final response with all relevant fields
