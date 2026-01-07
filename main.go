@@ -49,7 +49,7 @@ func main() {
 	r.With(middleware.Authenticate(cfg)).Get("/users/{user_did}/payouts", proxy.HandleUserPayouts)
 
 	// Protected routes
-	target := "http://localhost:20000"
+	target := "http://localhost:20050"
 	proxyHandler := proxy.NewReverseProxy(target)
 	//r.With(middleware.Authenticate(cfg)).Handle("/*", proxyHandler)
 	r.Route("/api", func(api chi.Router) {

@@ -437,7 +437,7 @@ func HandleUserPayouts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build the target URL with proper query encoding
-	targetURL := fmt.Sprintf("http://localhost:20000/api/get-ft-info-by-did?did=%s", url.QueryEscape(userDID))
+	targetURL := fmt.Sprintf("http://localhost:20050/api/get-ft-info-by-did?did=%s", url.QueryEscape(userDID))
 
 	// Create a new request to the target server
 	// GET requests should not have a body per HTTP semantics
