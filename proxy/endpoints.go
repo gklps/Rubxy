@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"time"
 
 	"rubxy/logger"
 
@@ -53,6 +52,14 @@ type FinalResponse struct {
 	Status  bool        `json:"status"`
 	Message string      `json:"message"`
 	Result  interface{} `json:"result"`
+}
+
+// getBoolValue safely extracts a bool value from interface{}
+func getBoolValue(v interface{}, defaultValue bool) bool {
+	if b, ok := v.(bool); ok {
+		return b
+	}
+	return defaultValue
 }
 
 // getStringValue safely extracts a string value from interface{}
@@ -101,7 +108,7 @@ func HandleAdminActivityAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := http.Post("http://localhost:9000/api/activity/add", "application/json", bytes.NewBuffer(reqBody))
+	resp, err := SharedHTTPClient.Post("http://localhost:9000/api/activity/add", "application/json", bytes.NewBuffer(reqBody))
 	if err != nil {
 		sendErrorResponse(w, http.StatusBadGateway, "Failed to forward request")
 		return
@@ -242,11 +249,7 @@ func HandleAdminRewardTransfer(w http.ResponseWriter, r *http.Request) {
 	// Send POST request to the external API with timeout (5 minutes)
 	logger.InfoLogger.Printf("[ADMIN PAYOUTS] Forwarding request to: http://localhost:9000/api/rewards/transfer")
 
-	client := &http.Client{
-		Timeout: 5 * time.Minute,
-	}
-
-	resp, err := client.Post("http://localhost:9000/api/rewards/transfer", "application/json", bytes.NewBuffer(jsonData))
+	resp, err := SharedHTTPClient.Post("http://localhost:9000/api/rewards/transfer", "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
 		logger.ErrorLogger.Printf("[ADMIN PAYOUTS] Failed to call external API: %v", err)
 		if urlErr, ok := err.(*url.Error); ok && urlErr.Timeout() {
@@ -337,6 +340,87 @@ func HandleAdminRewardTransfer(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// HandleAdminPayoutStatus fetches reward transfer status by request_id and wraps it into FinalResponse
+func HandleAdminPayoutStatus(w http.ResponseWriter, r *http.Request) {
+	// Extract request_id from URL
+	requestID := chi.URLParam(r, "request_id")
+	if requestID == "" {
+		sendErrorResponse(w, http.StatusBadRequest, "request_id is required")
+		return
+	}
+
+	// Build upstream status URL
+	statusURL := fmt.Sprintf("http://localhost:9000/api/rewards/status/%s", url.PathEscape(requestID))
+
+	// Create GET request
+	req, err := http.NewRequest("GET", statusURL, nil)
+	if err != nil {
+		sendErrorResponse(w, http.StatusInternalServerError, "Failed to create request")
+		return
+	}
+
+	// Call upstream status API
+	resp, err := SharedHTTPClient.Do(req)
+	if err != nil {
+		logger.ErrorLogger.Printf("[ADMIN PAYOUTS STATUS] Failed to call status API: %v", err)
+		sendErrorResponse(w, http.StatusBadGateway, fmt.Sprintf("Failed to call status API: %v", err))
+		return
+	}
+	defer resp.Body.Close()
+
+	// Check HTTP status code
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		logger.ErrorLogger.Printf("[ADMIN PAYOUTS STATUS] Status API error - Status: %d, Response: %s", resp.StatusCode, string(bodyBytes))
+		sendErrorResponse(w, resp.StatusCode, fmt.Sprintf("Status API returned error: %s", string(bodyBytes)))
+		return
+	}
+
+	// Parse upstream response
+	var apiResp map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		logger.ErrorLogger.Printf("[ADMIN PAYOUTS STATUS] Failed to parse status API response: %v", err)
+		sendErrorResponse(w, http.StatusInternalServerError, "Failed to parse status API response")
+		return
+	}
+
+	// Extract data section as result
+	var result interface{}
+	if data, ok := apiResp["data"]; ok {
+		result = data
+	}
+
+	// Derive message and status
+	var message string
+	if dataMap, ok := apiResp["data"].(map[string]interface{}); ok {
+		message = getStringValue(dataMap["message"], "")
+	}
+	if message == "" {
+		message = "Reward status fetched successfully"
+	}
+
+	status := getBoolValue(apiResp["status"], true)
+
+	finalResp := FinalResponse{
+		Status:  status,
+		Message: message,
+		Result:  result,
+	}
+
+	// Encode to buffer first to handle errors before writing to response
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(finalResp); err != nil {
+		logger.ErrorLogger.Printf("[ADMIN PAYOUTS STATUS] Failed to encode final response: %v", err)
+		sendErrorResponse(w, http.StatusInternalServerError, "Failed to encode final response")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if _, err := w.Write(buf.Bytes()); err != nil {
+		logger.ErrorLogger.Printf("[ADMIN PAYOUTS STATUS] Failed to write response: %v", err)
+	}
+}
+
 func HandleGetAllActivities(w http.ResponseWriter, r *http.Request) {
 	const filePath = "/home/rubix/github/ymca-wellness-cafe/dappServer/test.json"
 
@@ -380,7 +464,7 @@ func HandleAdminAddUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := http.Post("http://localhost:9000/api/admin/add", "application/json", bytes.NewBuffer(reqBody))
+	resp, err := SharedHTTPClient.Post("http://localhost:9000/api/admin/add", "application/json", bytes.NewBuffer(reqBody))
 	if err != nil {
 		sendErrorResponse(w, http.StatusBadGateway, "Failed to forward request")
 		return
@@ -459,8 +543,7 @@ func HandleUserPayouts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Make the request to the target server
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := SharedHTTPClient.Do(req)
 	if err != nil {
 		sendErrorResponse(w, http.StatusBadGateway, "Failed to forward request")
 		return

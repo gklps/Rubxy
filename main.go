@@ -37,6 +37,7 @@ func main() {
 
 	// Protected admin routes - register /admin/payouts directly first
 	r.With(middleware.Authenticate(cfg)).Post("/admin/payouts", proxy.HandleAdminRewardTransfer)
+	r.With(middleware.Authenticate(cfg)).Get("/admin/payouts/status/{request_id}", proxy.HandleAdminPayoutStatus)
 
 	r.Route("/admin", func(admin chi.Router) {
 		admin.Use(middleware.Authenticate(cfg))
@@ -73,6 +74,7 @@ func main() {
 	logger.InfoLogger.Println("  POST /logout")
 	logger.InfoLogger.Println("  POST /admin/activity/add (protected)")
 	logger.InfoLogger.Println("  POST /admin/payouts (protected)")
+	logger.InfoLogger.Println("  GET  /admin/payouts/status/{request_id} (protected)")
 	logger.InfoLogger.Println("  GET  /admin/activity/list (protected)")
 	logger.InfoLogger.Println("  POST /admin/user/add (protected)")
 	logger.InfoLogger.Println("  GET  /users/{user_did}/payouts (protected)")

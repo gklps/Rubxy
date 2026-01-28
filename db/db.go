@@ -18,6 +18,12 @@ func Init(databaseURL string) {
 		log.Fatalf("Failed to connect to DB: %v", err)
 	}
 
+	// Configure connection pool to prevent connection exhaustion
+	DB.SetMaxOpenConns(50)                  // Maximum number of open connections
+	DB.SetMaxIdleConns(10)                  // Maximum number of idle connections
+	DB.SetConnMaxLifetime(5 * time.Minute)  // Maximum lifetime of a connection
+	DB.SetConnMaxIdleTime(10 * time.Minute) // Maximum idle time before closing
+
 	if err = DB.Ping(); err != nil {
 		log.Fatalf("Database not reachable: %v", err)
 	}
