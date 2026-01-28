@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -57,12 +58,30 @@ func main() {
 		api.With(middleware.Authenticate(cfg)).Handle("/*", proxyHandler)
 	})
 
-	// 404 handler for debugging
+	// 404 handler – aggressively drop unknown/junk paths with minimal logging
 	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
-		logMsg := fmt.Sprintf("[404] Method: %s, Path: %s, RemoteAddr: %s, Headers: %v",
-			r.Method, r.URL.Path, r.RemoteAddr, r.Header)
+		path := r.URL.Path
+
+		// If this looks like a scanner/probing path, block immediately with 431 and NO logging
+		if isScannerPath(path) {
+			http.Error(w, "Request blocked", http.StatusRequestHeaderFieldsTooLarge)
+			return
+		}
+
+		// For other unknown paths, log a compact 404 (no headers/body) so you can still debug
+		ip := r.RemoteAddr
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			ips := strings.Split(xff, ",")
+			if len(ips) > 0 {
+				ip = strings.TrimSpace(ips[0])
+			}
+		} else if xri := r.Header.Get("X-Real-Ip"); xri != "" {
+			ip = strings.TrimSpace(xri)
+		}
+
+		logMsg := fmt.Sprintf("[404] Method: %s, Path: %s, IP: %s",
+			r.Method, path, ip)
 		logger.InfoLogger.Printf(logMsg)
-		log.Printf(logMsg) // Also log to console
 		http.Error(w, "404 page not found", http.StatusNotFound)
 	})
 
@@ -86,4 +105,27 @@ func main() {
 	if err := http.ListenAndServe(cfg.Port, r); err != nil {
 		log.Fatalf("Server failed: %v", err)
 	}
+}
+
+// isScannerPath detects obvious vulnerability/bot probing paths so we can drop them fast
+func isScannerPath(path string) bool {
+	p := strings.ToLower(path)
+
+	// Common sensitive files / probing patterns
+	suspiciousSubstrings := []string{
+		".env",
+		"/.git",
+		".gitconfig",
+		"/git/",
+		"/cgi-bin/",
+		"/luci/",
+	}
+
+	for _, s := range suspiciousSubstrings {
+		if strings.Contains(p, s) {
+			return true
+		}
+	}
+
+	return false
 }
