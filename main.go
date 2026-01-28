@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -25,6 +27,9 @@ func main() {
 	defer db.DB.Close()
 
 	r := chi.NewRouter()
+
+	// Bot filter - apply early to filter out scanner/bot requests
+	r.Use(middleware.BotFilter)
 
 	// Clean paths (trim trailing spaces) - apply globally
 	r.Use(middleware.CleanPath)
@@ -56,12 +61,24 @@ func main() {
 		api.With(middleware.Authenticate(cfg)).Handle("/*", proxyHandler)
 	})
 
-	// 404 handler for debugging
+	// 404 handler - simplified logging (bot requests already filtered)
 	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
-		logMsg := fmt.Sprintf("[404] Method: %s, Path: %s, RemoteAddr: %s, Headers: %v",
-			r.Method, r.URL.Path, r.RemoteAddr, r.Header)
+		// Extract IP
+		ip := r.RemoteAddr
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			ips := strings.Split(xff, ",")
+			if len(ips) > 0 {
+				ip = strings.TrimSpace(ips[0])
+			}
+		} else if xri := r.Header.Get("X-Real-Ip"); xri != "" {
+			ip = strings.TrimSpace(xri)
+		} else if idx := strings.LastIndex(ip, ":"); idx != -1 {
+			ip = ip[:idx]
+		}
+
+		logMsg := fmt.Sprintf("[404] Method: %s, Path: %s, IP: %s",
+			r.Method, r.URL.Path, ip)
 		logger.InfoLogger.Printf(logMsg)
-		log.Printf(logMsg) // Also log to console
 		http.Error(w, "404 page not found", http.StatusNotFound)
 	})
 
@@ -81,7 +98,17 @@ func main() {
 	log.Println("Registered routes:")
 	log.Println("  POST /admin/payouts (protected)")
 	log.Printf("Server running at %s\n", cfg.Port)
-	if err := http.ListenAndServe(cfg.Port, r); err != nil {
+
+	// Configure HTTP server with timeouts to handle long-running requests (3-5 minutes)
+	server := &http.Server{
+		Addr:         cfg.Port,
+		Handler:      r,
+		ReadTimeout:  7 * time.Minute,   // Time to read request (including body)
+		WriteTimeout: 7 * time.Minute,   // Time to write response (allows 3-5 min responses)
+		IdleTimeout:  120 * time.Second, // Time to keep idle connections
+	}
+
+	if err := server.ListenAndServe(); err != nil {
 		log.Fatalf("Server failed: %v", err)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -14,6 +15,23 @@ import (
 
 	"github.com/go-chi/chi/v5"
 )
+
+// Shared HTTP client with connection pooling to prevent connection exhaustion
+// Timeout set to 6 minutes to handle 3-5 minute API responses with buffer
+var sharedHTTPClient = &http.Client{
+	Timeout: 6 * time.Minute,
+	Transport: &http.Transport{
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   20,
+		IdleConnTimeout:       90 * time.Second,
+		ResponseHeaderTimeout: 6 * time.Minute, // Wait up to 6 minutes for response headers
+		DisableKeepAlives:     false,
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+	},
+}
 
 type ActivityAddRequest struct {
 	ActivityID   string `json:"activity_id"`
@@ -101,7 +119,14 @@ func HandleAdminActivityAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := http.Post("http://localhost:9000/api/activity/add", "application/json", bytes.NewBuffer(reqBody))
+	req, err := http.NewRequest("POST", "http://localhost:9000/api/activity/add", bytes.NewBuffer(reqBody))
+	if err != nil {
+		sendErrorResponse(w, http.StatusInternalServerError, "Failed to create request")
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := sharedHTTPClient.Do(req)
 	if err != nil {
 		sendErrorResponse(w, http.StatusBadGateway, "Failed to forward request")
 		return
@@ -154,18 +179,16 @@ func HandleAdminActivityAdd(w http.ResponseWriter, r *http.Request) {
 }
 
 func HandleAdminRewardTransfer(w http.ResponseWriter, r *http.Request) {
-	// Log incoming request
-	logger.InfoLogger.Printf("[ADMIN PAYOUTS] Incoming request - Method: %s, Path: %s, RemoteAddr: %s", r.Method, r.URL.Path, r.RemoteAddr)
-	logger.InfoLogger.Printf("[ADMIN PAYOUTS] Headers: %v", r.Header)
+	// Log incoming request summary
+	logger.InfoLogger.Printf("[ADMIN PAYOUTS] Incoming request - Method: %s, Path: %s", r.Method, r.URL.Path)
 
-	// Read body for logging (we'll need to recreate it for decoding)
+	// Read body (we'll need to recreate it for decoding)
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
 		logger.ErrorLogger.Printf("[ADMIN PAYOUTS] Failed to read request body: %v", err)
 		sendErrorResponse(w, http.StatusBadRequest, "Failed to read request body")
 		return
 	}
-	logger.InfoLogger.Printf("[ADMIN PAYOUTS] Request body: %s", string(bodyBytes))
 
 	// Recreate body for JSON decoder
 	r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
@@ -229,8 +252,7 @@ func HandleAdminRewardTransfer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	logger.InfoLogger.Printf("[ADMIN PAYOUTS] Parsed payload - ActivityID: %v, UserDID: %s, AdminDID: %s",
-		reqPayload.ActivityID, reqPayload.UserDID, reqPayload.AdminDID)
+	logger.InfoLogger.Printf("[ADMIN PAYOUTS] Processing - ActivityIDs: %d, UserDID: %s", len(reqPayload.ActivityID), reqPayload.UserDID)
 
 	// Marshal the payload to JSON
 	jsonData, err := json.Marshal(reqPayload)
@@ -239,14 +261,17 @@ func HandleAdminRewardTransfer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Send POST request to the external API with timeout (5 minutes)
-	logger.InfoLogger.Printf("[ADMIN PAYOUTS] Forwarding request to: http://localhost:9000/api/rewards/transfer")
+	// Send POST request to the external API
+	logger.InfoLogger.Printf("[ADMIN PAYOUTS] Calling external API")
 
-	client := &http.Client{
-		Timeout: 5 * time.Minute,
+	req, err := http.NewRequest("POST", "http://localhost:9000/api/rewards/transfer", bytes.NewBuffer(jsonData))
+	if err != nil {
+		sendErrorResponse(w, http.StatusInternalServerError, "Failed to create request")
+		return
 	}
+	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := client.Post("http://localhost:9000/api/rewards/transfer", "application/json", bytes.NewBuffer(jsonData))
+	resp, err := sharedHTTPClient.Do(req)
 	if err != nil {
 		logger.ErrorLogger.Printf("[ADMIN PAYOUTS] Failed to call external API: %v", err)
 		if urlErr, ok := err.(*url.Error); ok && urlErr.Timeout() {
@@ -258,18 +283,16 @@ func HandleAdminRewardTransfer(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
-	logger.InfoLogger.Printf("[ADMIN PAYOUTS] External API response status: %d", resp.StatusCode)
-
 	// Check if the external API returned an error status
 	// Accept 200 (OK), 201 (Created), 202 (Accepted), and other 2xx status codes as success
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		logger.ErrorLogger.Printf("[ADMIN PAYOUTS] External API returned error status %d: %s", resp.StatusCode, string(bodyBytes))
+		logger.ErrorLogger.Printf("[ADMIN PAYOUTS] External API error - Status: %d, Response: %s", resp.StatusCode, string(bodyBytes))
 		sendErrorResponse(w, resp.StatusCode, fmt.Sprintf("External API returned error: %s", string(bodyBytes)))
 		return
 	}
 
-	logger.InfoLogger.Printf("[ADMIN PAYOUTS] External API returned success status: %d", resp.StatusCode)
+	logger.InfoLogger.Printf("[ADMIN PAYOUTS] External API success - Status: %d", resp.StatusCode)
 
 	// Read and parse the response
 	var apiResp map[string]interface{}
@@ -278,8 +301,6 @@ func HandleAdminRewardTransfer(w http.ResponseWriter, r *http.Request) {
 		sendErrorResponse(w, http.StatusInternalServerError, "Failed to parse external API response")
 		return
 	}
-
-	logger.InfoLogger.Printf("[ADMIN PAYOUTS] External API response: %+v", apiResp)
 
 	// Check if the API response indicates failure
 	// For 202 (Accepted) status, we accept the response regardless of JSON status field
@@ -294,12 +315,9 @@ func HandleAdminRewardTransfer(w http.ResponseWriter, r *http.Request) {
 			sendErrorResponse(w, http.StatusBadGateway, message)
 			return
 		}
-	} else {
-		// For 202 responses, log the status but still process it as success
-		if status, ok := apiResp["status"].(string); ok {
-			logger.InfoLogger.Printf("[ADMIN PAYOUTS] External API returned 202 with status: %s - processing as success", status)
+		} else {
+			// For 202 responses, process as success (no need to log)
 		}
-	}
 
 	// Prepare the final response with all relevant fields
 	result := make(map[string]interface{})
@@ -321,7 +339,7 @@ func HandleAdminRewardTransfer(w http.ResponseWriter, r *http.Request) {
 		Result:  result,
 	}
 
-	logger.InfoLogger.Printf("[ADMIN PAYOUTS] Sending final response: %+v", finalResp)
+	logger.InfoLogger.Printf("[ADMIN PAYOUTS] Completed successfully")
 
 	// Encode to buffer first to handle errors before writing to response
 	var buf bytes.Buffer
@@ -380,7 +398,14 @@ func HandleAdminAddUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := http.Post("http://localhost:9000/api/admin/add", "application/json", bytes.NewBuffer(reqBody))
+	httpReq, err := http.NewRequest("POST", "http://localhost:9000/api/admin/add", bytes.NewBuffer(reqBody))
+	if err != nil {
+		sendErrorResponse(w, http.StatusInternalServerError, "Failed to create request")
+		return
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := sharedHTTPClient.Do(httpReq)
 	if err != nil {
 		sendErrorResponse(w, http.StatusBadGateway, "Failed to forward request")
 		return
@@ -459,8 +484,7 @@ func HandleUserPayouts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Make the request to the target server
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := sharedHTTPClient.Do(req)
 	if err != nil {
 		sendErrorResponse(w, http.StatusBadGateway, "Failed to forward request")
 		return
