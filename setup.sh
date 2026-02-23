@@ -127,6 +127,13 @@ if [[ "$OS" == "linux" ]]; then
 
     sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE $DB_NAME TO $DB_USER;"
 
+    # Grant permissions on the public schema (required for table creation)
+    echo "Granting schema permissions to '$DB_USER'..."
+    sudo -u postgres psql -d $DB_NAME -c "GRANT ALL ON SCHEMA public TO $DB_USER;"
+    sudo -u postgres psql -d $DB_NAME -c "GRANT CREATE ON SCHEMA public TO $DB_USER;"
+    sudo -u postgres psql -d $DB_NAME -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO $DB_USER;"
+    sudo -u postgres psql -d $DB_NAME -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO $DB_USER;"
+
     # For PostgreSQL with scram-sha-256, ensure the password encryption is correct
     sudo -u postgres psql -c "ALTER SYSTEM SET password_encryption = 'scram-sha-256';" || true
     sudo -u postgres psql -c "SELECT pg_reload_conf();" || true
@@ -149,6 +156,13 @@ elif [[ "$OS" == "macos" ]]; then
     fi
 
     psql postgres -c "GRANT ALL PRIVILEGES ON DATABASE $DB_NAME TO $DB_USER;"
+
+    # Grant permissions on the public schema
+    echo "Granting schema permissions to '$DB_USER'..."
+    psql -d $DB_NAME -c "GRANT ALL ON SCHEMA public TO $DB_USER;"
+    psql -d $DB_NAME -c "GRANT CREATE ON SCHEMA public TO $DB_USER;"
+    psql -d $DB_NAME -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO $DB_USER;"
+    psql -d $DB_NAME -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO $DB_USER;"
 fi
 echo -e "${GREEN}Database setup complete!${NC}"
 
