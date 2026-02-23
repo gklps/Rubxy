@@ -108,20 +108,45 @@ echo -e "${GREEN}PostgreSQL is running.${NC}"
 echo -e "${YELLOW}[3/5] Setting up database...${NC}"
 if [[ "$OS" == "linux" ]]; then
     # Linux: use sudo -u postgres
-    sudo -u postgres psql -tc "SELECT 1 FROM pg_user WHERE usename = '$DB_USER'" | grep -q 1 || \
+    # Check if user exists
+    if sudo -u postgres psql -tc "SELECT 1 FROM pg_user WHERE usename = '$DB_USER'" | grep -q 1; then
+        echo "User '$DB_USER' already exists. Updating password..."
+        sudo -u postgres psql -c "ALTER USER $DB_USER WITH PASSWORD '$DB_PASSWORD';"
+    else
+        echo "Creating user '$DB_USER'..."
         sudo -u postgres psql -c "CREATE USER $DB_USER WITH PASSWORD '$DB_PASSWORD';"
+    fi
 
-    sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname = '$DB_NAME'" | grep -q 1 || \
+    # Check if database exists
+    if sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname = '$DB_NAME'" | grep -q 1; then
+        echo "Database '$DB_NAME' already exists."
+    else
+        echo "Creating database '$DB_NAME'..."
         sudo -u postgres psql -c "CREATE DATABASE $DB_NAME OWNER $DB_USER;"
+    fi
 
     sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE $DB_NAME TO $DB_USER;"
+
+    # For PostgreSQL with scram-sha-256, ensure the password encryption is correct
+    sudo -u postgres psql -c "ALTER SYSTEM SET password_encryption = 'scram-sha-256';" || true
+    sudo -u postgres psql -c "SELECT pg_reload_conf();" || true
+
 elif [[ "$OS" == "macos" ]]; then
     # macOS: direct psql access
-    psql postgres -tc "SELECT 1 FROM pg_user WHERE usename = '$DB_USER'" | grep -q 1 || \
+    if psql postgres -tc "SELECT 1 FROM pg_user WHERE usename = '$DB_USER'" | grep -q 1; then
+        echo "User '$DB_USER' already exists. Updating password..."
+        psql postgres -c "ALTER USER $DB_USER WITH PASSWORD '$DB_PASSWORD';"
+    else
+        echo "Creating user '$DB_USER'..."
         psql postgres -c "CREATE USER $DB_USER WITH PASSWORD '$DB_PASSWORD';"
+    fi
 
-    psql postgres -tc "SELECT 1 FROM pg_database WHERE datname = '$DB_NAME'" | grep -q 1 || \
+    if psql postgres -tc "SELECT 1 FROM pg_database WHERE datname = '$DB_NAME'" | grep -q 1; then
+        echo "Database '$DB_NAME' already exists."
+    else
+        echo "Creating database '$DB_NAME'..."
         psql postgres -c "CREATE DATABASE $DB_NAME OWNER $DB_USER;"
+    fi
 
     psql postgres -c "GRANT ALL PRIVILEGES ON DATABASE $DB_NAME TO $DB_USER;"
 fi
@@ -174,10 +199,38 @@ else
 
         echo ""
         echo -e "${YELLOW}The database setup appears complete, but connection as '$DB_USER' failed.${NC}"
-        echo "This might be a PostgreSQL authentication configuration issue."
+        echo "This is likely a PostgreSQL password encryption issue with scram-sha-256."
         echo ""
-        echo "Try running manually:"
-        echo "  PGPASSWORD='$DB_PASSWORD' psql -h $DB_HOST -U $DB_USER -d $DB_NAME"
+        echo "Attempting to fix by resetting the user password..."
+
+        # Reset the password with proper encryption
+        if sudo -u postgres psql -c "ALTER USER $DB_USER WITH PASSWORD '$DB_PASSWORD';"; then
+            echo -e "${GREEN}Password updated. Testing connection again...${NC}"
+            sleep 1
+
+            # Try again
+            if psql -h $DB_HOST -U $DB_USER -d $DB_NAME -c "SELECT version();" > /dev/null 2>&1; then
+                echo -e "${GREEN}✓ Database connection successful after password reset!${NC}"
+                unset PGPASSWORD
+                echo ""
+                echo -e "${GREEN}==================================="
+                echo "  Setup Complete!"
+                echo "===================================${NC}"
+                echo ""
+                echo "Next steps:"
+                echo "  1. Review the .env file and update if needed"
+                echo "  2. Run './build.sh' to build the application"
+                echo "  3. Run './rubxy' to start the server"
+                echo ""
+                echo -e "${YELLOW}Note: Keep your .env file secure and don't commit it to git!${NC}"
+                exit 0
+            else
+                echo -e "${RED}Still failed. Try manually:${NC}"
+                echo "  PGPASSWORD='$DB_PASSWORD' psql -h $DB_HOST -U $DB_USER -d $DB_NAME"
+            fi
+        fi
+        echo ""
+        echo "If this persists, you may need to modify pg_hba.conf to use 'md5' instead of 'scram-sha-256'"
 
     else
         echo -e "${RED}  ✗ PostgreSQL is not responding${NC}"
