@@ -30,6 +30,16 @@ type AdminAddRequest struct {
 	ExistingAdminDID string `json:"existing_admin_did"`
 }
 
+type CreateDIDRequest struct {
+	AdminDID  string `json:"admin_did"`
+	PublicKey string `json:"public_key"`
+}
+
+type CreateDIDResponse struct {
+	Status bool                   `json:"status"`
+	Data   map[string]interface{} `json:"data"`
+}
+
 type ActivityData struct {
 	ActivityID   string `json:"activity_id"`
 	BlockHash    string `json:"block_hash"`
@@ -564,5 +574,121 @@ func HandleUserPayouts(w http.ResponseWriter, r *http.Request) {
 	_, err = io.Copy(w, resp.Body)
 	if err != nil {
 		logger.ErrorLogger.Printf("Failed to copy response body: %v", err)
+	}
+}
+
+func HandleCreateDID(w http.ResponseWriter, r *http.Request) {
+	logger.InfoLogger.Printf("[CREATE DID] Incoming request - Method: %s, Path: %s, RemoteAddr: %s", r.Method, r.URL.Path, r.RemoteAddr)
+
+	// Read and log request body
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		logger.ErrorLogger.Printf("[CREATE DID] Failed to read request body: %v", err)
+		sendErrorResponse(w, http.StatusBadRequest, "Failed to read request body")
+		return
+	}
+	logger.InfoLogger.Printf("[CREATE DID] Request body: %s", string(bodyBytes))
+
+	// Recreate body for JSON decoder
+	r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+
+	// Decode request body
+	var reqPayload CreateDIDRequest
+	if err := json.NewDecoder(r.Body).Decode(&reqPayload); err != nil {
+		logger.ErrorLogger.Printf("[CREATE DID] Failed to decode request body: %v", err)
+		sendErrorResponse(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	// Validate required fields
+	if reqPayload.AdminDID == "" {
+		sendErrorResponse(w, http.StatusBadRequest, "admin_did is required")
+		return
+	}
+	if reqPayload.PublicKey == "" {
+		sendErrorResponse(w, http.StatusBadRequest, "public_key is required")
+		return
+	}
+
+	logger.InfoLogger.Printf("[CREATE DID] Parsed payload - AdminDID: %s, PublicKey: %s", reqPayload.AdminDID, reqPayload.PublicKey)
+
+	// Marshal the payload to JSON
+	jsonData, err := json.Marshal(reqPayload)
+	if err != nil {
+		sendErrorResponse(w, http.StatusInternalServerError, "Failed to marshal request")
+		return
+	}
+
+	// Send POST request to the external API
+	logger.InfoLogger.Printf("[CREATE DID] Forwarding request to: http://localhost:9000/api/create-did-with-pubkey")
+
+	resp, err := SharedHTTPClient.Post("http://localhost:9000/api/create-did-with-pubkey", "application/json", bytes.NewBuffer(jsonData))
+	if err != nil {
+		logger.ErrorLogger.Printf("[CREATE DID] Failed to call external API: %v", err)
+		if urlErr, ok := err.(*url.Error); ok && urlErr.Timeout() {
+			sendErrorResponse(w, http.StatusGatewayTimeout, "External API request timed out")
+		} else {
+			sendErrorResponse(w, http.StatusBadGateway, fmt.Sprintf("Failed to call external API: %v", err))
+		}
+		return
+	}
+	defer resp.Body.Close()
+
+	logger.InfoLogger.Printf("[CREATE DID] External API response status: %d", resp.StatusCode)
+
+	// Read response body
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		logger.ErrorLogger.Printf("[CREATE DID] Failed to read response: %v", err)
+		sendErrorResponse(w, http.StatusInternalServerError, "Failed to read response")
+		return
+	}
+
+	logger.InfoLogger.Printf("[CREATE DID] External API response body: %s", string(respBody))
+
+	// Check if the external API returned an error status
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		logger.ErrorLogger.Printf("[CREATE DID] External API returned error status %d: %s", resp.StatusCode, string(respBody))
+		sendErrorResponse(w, resp.StatusCode, fmt.Sprintf("External API returned error: %s", string(respBody)))
+		return
+	}
+
+	// Parse the response
+	var apiResp CreateDIDResponse
+	if err := json.Unmarshal(respBody, &apiResp); err != nil {
+		logger.ErrorLogger.Printf("[CREATE DID] Failed to parse external API response: %v", err)
+		sendErrorResponse(w, http.StatusInternalServerError, "Failed to parse external API response")
+		return
+	}
+
+	logger.InfoLogger.Printf("[CREATE DID] External API response parsed: %+v", apiResp)
+
+	// Check the status field
+	if !apiResp.Status {
+		logger.ErrorLogger.Printf("[CREATE DID] External API returned status false")
+		sendErrorResponse(w, http.StatusBadGateway, "DID creation failed")
+		return
+	}
+
+	// Prepare the final response
+	finalResp := FinalResponse{
+		Status:  apiResp.Status,
+		Message: "DID created successfully",
+		Result:  apiResp.Data,
+	}
+
+	logger.InfoLogger.Printf("[CREATE DID] Sending final response: %+v", finalResp)
+
+	// Encode to buffer first to handle errors before writing to response
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(finalResp); err != nil {
+		logger.ErrorLogger.Printf("[CREATE DID] Failed to encode final response: %v", err)
+		sendErrorResponse(w, http.StatusInternalServerError, "Failed to encode final response")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if _, err := w.Write(buf.Bytes()); err != nil {
+		logger.ErrorLogger.Printf("[CREATE DID] Failed to write response: %v", err)
 	}
 }

@@ -50,6 +50,9 @@ func main() {
 	// Protected user routes
 	r.With(middleware.Authenticate(cfg)).Get("/users/{user_did}/payouts", proxy.HandleUserPayouts)
 
+	// Protected DID creation endpoint
+	r.With(middleware.Authenticate(cfg)).Post("/createdid", proxy.HandleCreateDID)
+
 	// Protected routes
 	target := "http://localhost:20050"
 	proxyHandler := proxy.NewReverseProxy(target)
@@ -97,6 +100,7 @@ func main() {
 	logger.InfoLogger.Println("  GET  /admin/activity/list (protected)")
 	logger.InfoLogger.Println("  POST /admin/user/add (protected)")
 	logger.InfoLogger.Println("  GET  /users/{user_did}/payouts (protected)")
+	logger.InfoLogger.Println("  POST /createdid (protected)")
 	logger.InfoLogger.Println("  *    /api/* (protected, proxied)")
 
 	log.Println("Registered routes:")
