@@ -20,7 +20,7 @@ var (
 
 func Register(username, password string) error {
 
-	return fmt.Errorf("user registration is currently disabled: no more users are allowed to create")
+	//return fmt.Errorf("user registration is currently disabled: no more users are allowed to create")
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
